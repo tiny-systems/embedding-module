@@ -20,20 +20,16 @@ func init() {
 	// Declare the TEI bundle so installing this module also
 	// provisions an in-cluster HuggingFace text-embeddings-inference
 	// service. The operator chart picks up bundles.tei.enabled=true
-	// and renders the curated TEI subchart. Without a bundle, users
-	// would need to run their own embedding service and pass TEI_URL
-	// manually — defeating the point of a self-contained module.
+	// and renders the curated TEI subchart at <release>-tei. The
+	// embed_text component resolves that endpoint at runtime via
+	// pkg/bundle.URL("tei") — no install-time env wiring needed.
 	registry.SetRequirements(module.Requirements{
 		Bundles: module.Bundles{
 			module.Bundle{
 				Name:           "tei",
 				Description:    "HuggingFace text-embeddings-inference. BAAI/bge-small-en-v1.5 default (384 dims, CPU). Override bundles.tei.image.tag for a GPU image.",
 				DefaultEnabled: true,
-				// Module pod reads TEI_URL from env. The release name
-				// (%MODULE_NAME_SANITISED%) is the operator-installed
-				// helm release; subchart-aliased services land at
-				// <release>-tei in the same namespace.
-				ConnectionHint: "Set TEI_URL=http://<release>-tei:80 on the module deployment env",
+				ConnectionHint: "Auto-discovered via bundle.URL(\"tei\") — http://<release>-tei:80",
 			},
 		},
 	})
