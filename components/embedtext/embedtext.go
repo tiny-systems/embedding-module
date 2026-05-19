@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/tiny-systems/module/api/v1alpha1"
 	"github.com/tiny-systems/module/module"
+	"github.com/tiny-systems/module/pkg/bundle"
 	"github.com/tiny-systems/module/registry"
 )
 
@@ -28,7 +28,7 @@ type Context any
 
 type Settings struct {
 	EnableErrorPort bool   `json:"enableErrorPort" required:"true" title:"Enable Error Port"`
-	BaseURL         string `json:"baseURL" title:"TEI Base URL" description:"Override the TEI endpoint. Default reads TEI_URL env (set by the platform when the tei bundle is enabled)."`
+	BaseURL         string `json:"baseURL" title:"TEI Base URL" description:"Override the TEI endpoint. Defaults to in-cluster discovery via the tei bundle when running inside the operator chart."`
 	TimeoutSeconds  int    `json:"timeoutSeconds" minimum:"1" default:"30" title:"Timeout Seconds"`
 	Truncate        bool   `json:"truncate" title:"Truncate" description:"Ask TEI to silently truncate inputs longer than the model's max sequence length instead of erroring."`
 }
@@ -153,15 +153,17 @@ func (c *Component) embed(ctx context.Context, handler module.Handler, in Reques
 	})
 }
 
-// resolveBaseURL picks settings.baseURL first, then TEI_URL env. The
-// env-var path is what the platform's bundle wiring uses — when the
-// tei bundle is enabled the install flow sets TEI_URL on the module
-// deployment env, so the component works without any configuration.
+// resolveBaseURL picks settings.baseURL first, then in-cluster
+// bundle discovery. With the tei bundle enabled the operator chart
+// provisions a Service at <release>-tei in the same namespace;
+// bundle.URL renders that. Returns empty when RELEASE_NAME isn't
+// set and no override is configured — the caller surfaces that as
+// a misconfiguration error.
 func (c *Component) resolveBaseURL() string {
 	if c.settings.BaseURL != "" {
 		return c.settings.BaseURL
 	}
-	return os.Getenv("TEI_URL")
+	return bundle.URLOr("tei", "")
 }
 
 func (c *Component) fail(ctx context.Context, handler module.Handler, reqCtx Context, err error) module.Result {
