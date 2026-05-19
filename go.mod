@@ -1,4 +1,4 @@
-module github.com/tiny-systems/embedding-module-v0
+module github.com/tiny-systems/embedding-module
 
 go 1.25.5
 
