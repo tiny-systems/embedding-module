@@ -30,6 +30,14 @@ func init() {
 				Description:    "HuggingFace text-embeddings-inference. BAAI/bge-small-en-v1.5 default (384 dims, CPU). Override bundles.tei.image.tag for a GPU image.",
 				DefaultEnabled: true,
 				ConnectionHint: "Auto-discovered via bundle.URL(\"tei\") — http://<release>-tei:80",
+				Values: map[string]any{
+					// cpu-1.9: cpu-1.5 had a model-download URL bug that
+					// crashlooped TEI on first boot ("relative URL without a
+					// base"). Set here so the install job's --set overrides the
+					// deployed operator chart's tei.image.tag without waiting on
+					// an operator-chart + platform bump.
+					"image": map[string]any{"tag": "cpu-1.9"},
+				},
 			},
 		},
 	})
