@@ -44,11 +44,6 @@ type Response struct {
 	Dims      int       `json:"dims" title:"Dims"`
 }
 
-type Error struct {
-	Context Context `json:"context,omitempty" configurable:"true" title:"Context"`
-	Error   string  `json:"error" title:"Error"`
-}
-
 type Component struct {
 	settings Settings
 }
@@ -96,9 +91,12 @@ type teiRequest struct {
 }
 
 func (c *Component) embed(ctx context.Context, handler module.Handler, in Request) module.Result {
+	// Embedding is a pure function of the text, so every transient failure below
+	// is safe to re-run — the only judgement needed is whether it *could* clear.
 	baseURL := strings.TrimRight(c.resolveBaseURL(), "/")
 	if baseURL == "" {
-		return c.fail(ctx, handler, in.Context, fmt.Errorf("TEI endpoint not configured: set settings.baseURL or the TEI_URL env var"))
+		// Misconfiguration: no amount of backoff supplies a missing URL.
+		return c.fail(ctx, handler, in.Context, module.Permanent(fmt.Errorf("TEI endpoint not configured: set settings.baseURL or the TEI_URL env var")))
 	}
 
 	timeout := time.Duration(c.settings.TimeoutSeconds) * time.Second
@@ -122,17 +120,26 @@ func (c *Component) embed(ctx context.Context, handler module.Handler, in Reques
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return c.fail(ctx, handler, in.Context, fmt.Errorf("tei request: %w", err))
+		// Never got a response — TEI still warming up, pod rescheduled, dial or
+		// timeout. Exactly what a backoff is for.
+		return c.fail(ctx, handler, in.Context, module.Retryable(fmt.Errorf("tei request: %w", err)))
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return c.fail(ctx, handler, in.Context, fmt.Errorf("read tei response: %w", err))
+		return c.fail(ctx, handler, in.Context, module.Retryable(fmt.Errorf("read tei response: %w", err)))
 	}
 
 	if resp.StatusCode >= 400 {
-		return c.fail(ctx, handler, in.Context, fmt.Errorf("tei status %d: %s", resp.StatusCode, string(body)))
+		statusErr := fmt.Errorf("tei status %d: %s", resp.StatusCode, string(body))
+		// 429 means TEI's queue is full and 5xx means it failed on its side;
+		// both clear on their own. A 4xx is about this text (too long for the
+		// model, malformed payload) and will fail identically forever.
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			statusErr = module.Retryable(statusErr)
+		}
+		return c.fail(ctx, handler, in.Context, statusErr)
 	}
 
 	// TEI returns [[float, float, ...]] — a list of vectors, one per
@@ -168,12 +175,10 @@ func (c *Component) resolveBaseURL() string {
 
 func (c *Component) fail(ctx context.Context, handler module.Handler, reqCtx Context, err error) module.Result {
 	if !c.settings.EnableErrorPort {
+		// Bubble unchanged so retryability marked at the call site survives.
 		return module.Fail(err)
 	}
-	return handler(ctx, ErrorPort, Error{
-		Context: reqCtx,
-		Error:   err.Error(),
-	})
+	return handler(ctx, ErrorPort, module.NewError(reqCtx, err))
 }
 
 func (c *Component) Ports() []module.Port {
@@ -186,7 +191,7 @@ func (c *Component) Ports() []module.Port {
 		return ports
 	}
 	return append(ports, module.Port{
-		Name: ErrorPort, Label: "Error", Source: true, Configuration: Error{}, Position: module.Bottom,
+		Name: ErrorPort, Label: "Error", Source: true, Configuration: module.ErrorMessage{}, Position: module.Bottom,
 	})
 }
 
